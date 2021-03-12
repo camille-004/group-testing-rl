@@ -33,6 +33,10 @@ class Oracle:
         """
         return np.multiply(w_hat_t, self.x_)
 
+# TODO Other Oracles that knows WH matrix and picks index of w_hat_t that is given in above Oracle, another that
+#  determines if solution is unique
+# Oracle that determines i-th row of Walsh-Hadamard matrix <- find out how to do this without the full matrix
+
 
 if __name__ == '__main__':
     wh = gen_walsh_hadamard(4)
