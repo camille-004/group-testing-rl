@@ -72,16 +72,20 @@ class Oracle:
         """
         return [self.get_w_hat_t(i) for i in range(self._N)]
 
+    def check_unique_sol(self, t_idx):
+        x = np.linalg.inv(self.W).dot(self.get_y_t(t_idx))
+        return x
+
 
 if __name__ == '__main__':
     orc = Oracle([1, 1, 0, 0], 4)
     t = 3
 
     w_hat_t = orc.get_w_hat_t(t)  # [1, 0, 0, 1]
-    print(w_hat_t)
+    print(f'w_hat_t for t = {t}: {w_hat_t}')
 
     y_hat_t = orc.get_y_t(t)  # [1, 0, 0, 0]
-    print(y_hat_t)
+    print(f'y_hat_t for t = {t}: {y_hat_t}')
 
     wh = orc.gen_walsh_hadamard()
     '''
@@ -90,4 +94,6 @@ if __name__ == '__main__':
      [1, 1, 0, 0], 
      [1, 0, 0, 1]]
     '''
-    print(wh)
+    print(f'Resulting Walsh-Hadamard matrix of order N = 4: {wh}')
+
+    print(f'Solution to W * x = y for t = {3}: {orc.check_unique_sol(t)}')
