@@ -74,11 +74,14 @@ class Oracle:
         return [self.get_w_hat_t(i) for i in range(self._N)]
 
     def check_unique_sol(self, t_start, t_end):
-        # N choose K solutions, with subset of W-H matrix
-        # Use subset of W
-        # Pseudo-inverse matrix instead of normal inverse
-        # x = np.linalg.inv(self.W).dot(self.get_y_t(t_idx))
-        # return x
+        """
+        Uses subset of rows of W to get unique solution of N choose K solutions
+        Uses pseudo-inverse (Moore-Penrose)
+        :param t_start: starting index for subset
+        :param t_end: ending index for subset
+        :return: 2D numpy array
+        """
+
         assert t_start in range(0, self._N - 1)
         assert t_end in range(t_start, self._N)
 
