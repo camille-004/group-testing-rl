@@ -39,6 +39,7 @@ class Oracle:
     computation"""
 
     def __init__(self, x, N):
+        # Change x to K, with K being number of ones, then initiate X from that
         self._x = x
         self._N = N
         self.W = self.gen_walsh_hadamard()
@@ -72,28 +73,45 @@ class Oracle:
         """
         return [self.get_w_hat_t(i) for i in range(self._N)]
 
-    def check_unique_sol(self, t_idx):
-        x = np.linalg.inv(self.W).dot(self.get_y_t(t_idx))
+    def check_unique_sol(self, t_start, t_end):
+        # N choose K solutions, with subset of W-H matrix
+        # Use subset of W
+        # Pseudo-inverse matrix instead of normal inverse
+        # x = np.linalg.inv(self.W).dot(self.get_y_t(t_idx))
+        # return x
+        assert t_start in range(0, self._N - 1)
+        assert t_end in range(t_start, self._N)
+
+        subset = self.W[t_start:t_end + 1][:]
+        x = np.linalg.pinv(subset).dot([
+            self.get_y_t(t_idx) for t_idx in range(t_start, t_end + 1
+                                                   )])
         return x
 
 
-if __name__ == '__main__':
-    orc = Oracle([1, 1, 0, 0], 4)
-    t = 3
+# %%
+orc = Oracle([1, 1, 0, 0], 4)
+t = 1
 
-    w_hat_t = orc.get_w_hat_t(t)  # [1, 0, 0, 1]
-    print(f'w_hat_t for t = {t}: {w_hat_t}')
+w_hat_t = orc.get_w_hat_t(t)  # [1, 0, 0, 1]
+print(f'w_hat_t for t = {t}: {w_hat_t}')
 
-    y_hat_t = orc.get_y_t(t)  # [1, 0, 0, 0]
-    print(f'y_hat_t for t = {t}: {y_hat_t}')
+y_hat_t = orc.get_y_t(t)  # [1, 0, 0, 0]
+print(f'y_hat_t for t = {t}: {y_hat_t}')
 
-    wh = orc.gen_walsh_hadamard()
-    '''
-    [[1, 1, 1, 1], 
-     [1, 0, 1, 0], 
-     [1, 1, 0, 0], 
-     [1, 0, 0, 1]]
-    '''
-    print(f'Resulting Walsh-Hadamard matrix of order N = 4: {wh}')
+wh = orc.gen_walsh_hadamard()
+'''
+[[1, 1, 1, 1], 
+ [1, 0, 1, 0], 
+ [1, 1, 0, 0], 
+ [1, 0, 0, 1]]
+'''
+print(f'Resulting Walsh-Hadamard matrix of order N = 4: {wh}')
 
-    print(f'Solution to W * x = y for t = {3}: {orc.check_unique_sol(t)}')
+print(f'Solution to W * x = y for t = {3}: {orc.check_unique_sol(t, t + 1)}')
+'''
+[[0.66666667, 0.33333333, 0, 0]
+ [0.33333333, 0.66666667,  0, 0]
+ [0.33333333, -0.33333333, 0, 0]
+ [0, 0, 0, 0]]
+'''
