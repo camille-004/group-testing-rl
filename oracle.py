@@ -1,4 +1,5 @@
 import numpy as np
+# TODO Transfer everything to Jupyter Notebook for easier testing
 
 
 def to_binary(n, N):
