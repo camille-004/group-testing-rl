@@ -38,11 +38,27 @@ class Oracle:
     """Class to generate a Walsh-Hadamard matrix based on Walsh function
     computation"""
 
-    def __init__(self, x, N):
-        # Change x to K, with K being number of ones, then initiate X from that
-        self._x = x
+    def __init__(self, K, N):
         self._N = N
+        self._K = K
         self.W = self.gen_walsh_hadamard()
+        self._x = self.get_x_vector(self._N, self._K)
+
+    @staticmethod
+    def get_x_vector(N, K):
+        """
+        Return x from given order of WH matrix and K
+
+        :param N: Order of WH matrix
+        :param K: Number of ones
+        :return: numpy.ndarray
+        """
+        x = np.zeros(N)
+        random_pos = np.random.choice(
+            np.arange(0, N), K, replace=False
+        )
+        x[random_pos] = 1
+        return x
 
     def get_w_hat_t(self, t_idx: int) -> list:
         """
@@ -57,13 +73,13 @@ class Oracle:
 
         return row
 
-    def get_y_t(self, t_idx):
+    def get_y_t(self, t_idx, x):
         """
         Get observation vector from self._x and self.w_hat_t
 
         :return: numpy.ndarray
         """
-        return np.multiply(self.get_w_hat_t(t_idx), self._x)
+        return np.multiply(self.get_w_hat_t(t_idx), x)
 
     def gen_walsh_hadamard(self):
         """
@@ -73,48 +89,47 @@ class Oracle:
         """
         return [self.get_w_hat_t(i) for i in range(self._N)]
 
-    def check_unique_sol(self, t_start, t_end):
+    def check_unique_sol(self, n_rows):
         """
-        Uses subset of rows of W to get unique solution of N choose K solutions
-        Uses pseudo-inverse (Moore-Penrose)
-        :param t_start: starting index for subset
-        :param t_end: ending index for subset
-        :return: 2D numpy array
+        Attempt to arrive at a solution, x = WW^-1y, through sampling rows of
+        WH without replacement
+
+        :param n_rows: Number of rows to sample from the WH matrix to check for a
+        unique solution
+        :return: numpy.ndarray
         """
+        # TODO Return the UNIQUE solution
+        assert n_rows <= self._N
 
-        assert t_start in range(0, self._N - 1)
-        assert t_end in range(t_start, self._N)
+        row_pos = np.random.choice(
+            np.arange(0, len(self.W)), n_rows, replace=False
+        )
 
-        subset = self.W[t_start:t_end + 1][:]
-        x = np.linalg.pinv(subset).dot([
-            self.get_y_t(t_idx) for t_idx in range(t_start, t_end + 1
-                                                   )])
-        return x
+        W_hat = np.empty((0, self._N))
+        for row_idx in range(len(row_pos)):
+            # x is N x 1, W is row_idx x N, W_inv is N x row_idx, y should be row_idx x 1
+            W_hat = np.vstack([W_hat, self.W[row_idx]])
+            W_hat_inv = np.linalg.pinv(W_hat)
+            curr_y = self.get_y_t(row_idx, self._x)[:row_idx + 1]
+            x = W_hat_inv.dot(curr_y)
+            print(x)
 
 
-# %%
-orc = Oracle([1, 1, 0, 0], 4)
-t = 1
+orc = Oracle(5, 16)
+t = 2
 
-w_hat_t = orc.get_w_hat_t(t)  # [1, 0, 0, 1]
-print(f'w_hat_t for t = {t}: {w_hat_t}')
+x = orc._x
+print(f'x for K = 5: {x}')
 
-y_hat_t = orc.get_y_t(t)  # [1, 0, 0, 0]
+y_hat_t = orc.get_y_t(t)
 print(f'y_hat_t for t = {t}: {y_hat_t}')
 
 wh = orc.gen_walsh_hadamard()
 '''
-[[1, 1, 1, 1], 
- [1, 0, 1, 0], 
- [1, 1, 0, 0], 
+[[1, 1, 1, 1],
+ [1, 0, 1, 0],
+ [1, 1, 0, 0],
  [1, 0, 0, 1]]
 '''
 print(f'Resulting Walsh-Hadamard matrix of order N = 4: {wh}')
-
-print(f'Solution to W * x = y for t = {3}: {orc.check_unique_sol(t, t + 1)}')
-'''
-[[0.66666667, 0.33333333, 0, 0]
- [0.33333333, 0.66666667,  0, 0]
- [0.33333333, -0.33333333, 0, 0]
- [0, 0, 0, 0]]
-'''
+# print(f'Solution to W * x = y: {orc.check_unique_sol(5)}')
