@@ -1,4 +1,6 @@
 import numpy as np
+
+
 # TODO Transfer everything to Jupyter Notebook for easier testing
 
 
@@ -113,24 +115,26 @@ class Oracle:
             W_hat_inv = np.linalg.pinv(W_hat)
             curr_y = self.get_y_t(row_idx, self._x)[:row_idx + 1]
             x = W_hat_inv.dot(curr_y)
-            print(x)
+            print(np.mean(x - self._x))
 
 
-orc = Oracle(5, 16)
-t = 2
+if __name__ == '__main__':
+    N = 36
+    orc = Oracle(5, N)
+    t = 2
 
-x = orc._x
-print(f'x for K = 5: {x}')
+    x = orc._x
+    # print(f'x for K = 5: {x}')
 
-y_hat_t = orc.get_y_t(t)
-print(f'y_hat_t for t = {t}: {y_hat_t}')
+    y_hat_t = orc.get_y_t(t, x)
+    # print(f'y_hat_t for t = {t}: {y_hat_t}')
 
-wh = orc.gen_walsh_hadamard()
-'''
-[[1, 1, 1, 1],
- [1, 0, 1, 0],
- [1, 1, 0, 0],
- [1, 0, 0, 1]]
-'''
-print(f'Resulting Walsh-Hadamard matrix of order N = 4: {wh}')
-# print(f'Solution to W * x = y: {orc.check_unique_sol(5)}')
+    wh = orc.gen_walsh_hadamard()
+    '''
+    [[1, 1, 1, 1],
+     [1, 0, 1, 0],
+     [1, 1, 0, 0],
+     [1, 0, 0, 1]]
+    '''
+    # print(f'Resulting Walsh-Hadamard matrix of order N = 4: {wh}')
+    print(f'Solution to W * x = y: {orc.check_unique_sol(N)}')
