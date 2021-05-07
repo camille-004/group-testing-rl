@@ -1,5 +1,9 @@
+import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 
+np.random.seed(0)
+sns.set_style('whitegrid')
 
 # TODO Transfer everything to Jupyter Notebook for easier testing
 
@@ -34,7 +38,9 @@ def get_w_hat_t_helper(row_idx, col_idx, N):
     for row_bit, col_bit in zip(row_list, col_list):
         result += row_bit * col_bit
 
-    return int((1 + ((-1) ** result)) / 2)
+# TODO Change back to -1 and 1
+    result = int((1 + ((-1) ** result)) / 2)
+    return (2 * result) - 1
 
 
 class Oracle:
@@ -42,6 +48,8 @@ class Oracle:
     computation"""
 
     def __init__(self, K, N):
+        # Use bitwise manipulations to check if N is a power of 2
+        assert (N & (N - 1) == 0) and N != 0
         self._N = N
         self._K = K
         self.W = self.gen_walsh_hadamard()
@@ -108,33 +116,41 @@ class Oracle:
             np.arange(0, len(self.W)), n_rows, replace=False
         )
 
+        print('---')
+        print(self._x)
+        print('---')
+
         W_hat = np.empty((0, self._N))
+        diffs = []
         for row_idx in range(len(row_pos)):
-            # x is N x 1, W is row_idx x N, W_inv is N x row_idx, y should be row_idx x 1
+            # x is N x 1, W is row_idx x N, W_inv is N x row_idx,
+            # y should be row_idx x 1
             W_hat = np.vstack([W_hat, self.W[row_idx]])
             W_hat_inv = np.linalg.pinv(W_hat)
             curr_y = self.get_y_t(row_idx, self._x)[:row_idx + 1]
-            x = W_hat_inv.dot(curr_y)
-            print(np.mean(x - self._x))
+            x_tilde = W_hat_inv.dot(curr_y) * n_rows
+            diffs.append(
+                np.count_nonzero(
+                    np.isclose(
+                        x_tilde - self._x, np.zeros(self._N), atol=0.1)
+                ) / self._N)
+
+        plt.plot(diffs)
+        plt.xlabel('Number of Rows to Generate x_tilde')
+        plt.ylabel('Difference from True x Proportion')
+        plt.axvline(int(self._K * np.log2(self._N) / np.log2(self._K)), c='r')
+        plt.title(f'Closeness to True x: K = {self._K}, N = {self._N}')
+        plt.show()
 
 
 if __name__ == '__main__':
-    N = 36
-    orc = Oracle(5, N)
+    N = 32
+    K = 8
+    orc = Oracle(K, N) # Number of rows needed: KlogN / logK <- Try this
     t = 2
 
-    x = orc._x
-    # print(f'x for K = 5: {x}')
+    ideal_n_rows = int(K * np.log2(N) / np.log2(K))
+    # print(f'Solution to W * x = y: {orc.check_unique_sol(int(K * np.log2(N) / np.log2(K)))}')
+    orc.check_unique_sol(N)
 
-    y_hat_t = orc.get_y_t(t, x)
-    # print(f'y_hat_t for t = {t}: {y_hat_t}')
-
-    wh = orc.gen_walsh_hadamard()
-    '''
-    [[1, 1, 1, 1],
-     [1, 0, 1, 0],
-     [1, 1, 0, 0],
-     [1, 0, 0, 1]]
-    '''
-    # print(f'Resulting Walsh-Hadamard matrix of order N = 4: {wh}')
-    print(f'Solution to W * x = y: {orc.check_unique_sol(N)}')
+    # TODO Plot, as a function of number rows, when the difference gets to 0
