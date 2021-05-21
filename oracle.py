@@ -122,17 +122,23 @@ class Oracle:
 
         W_hat = np.empty((0, self._N))
         diffs = []
-        for row_idx in range(len(row_pos)):
+        # for row_idx in range(len(row_pos)):
+        for row_idx in range(self._N):
             # x is N x 1, W is row_idx x N, W_inv is N x row_idx,
             # y should be row_idx x 1
             W_hat = np.vstack([W_hat, self.W[row_idx]])
-            W_hat_inv = np.linalg.pinv(W_hat)
+            # print(W_hat)
+            W_hat_inv = np.linalg.pinv(W_hat) * self._N
+            # print(np.matmul(W_hat, W_hat_inv))
             curr_y = self.get_y_t(row_idx, self._x)[:row_idx + 1]
-            x_tilde = W_hat_inv.dot(curr_y) * n_rows
+            # print(curr_y)
+            # print(W_hat_inv)
+            x_tilde = np.round(W_hat_inv.dot(curr_y), 2)# * n_rows
+            print(x_tilde)
             diffs.append(
                 np.count_nonzero(
                     np.isclose(
-                        x_tilde - self._x, np.zeros(self._N), atol=0.1)
+                        x_tilde - self._x, np.zeros(self._N), atol=0.01)
                 ) / self._N)
 
         plt.plot(diffs)
@@ -144,13 +150,17 @@ class Oracle:
 
 
 if __name__ == '__main__':
-    N = 32
-    K = 8
+    N = 8
+    K = 2
     orc = Oracle(K, N) # Number of rows needed: KlogN / logK <- Try this
     t = 2
 
     ideal_n_rows = int(K * np.log2(N) / np.log2(K))
     # print(f'Solution to W * x = y: {orc.check_unique_sol(int(K * np.log2(N) / np.log2(K)))}')
-    orc.check_unique_sol(N)
+    # orc.check_unique_sol(N)
 
-    # TODO Plot, as a function of number rows, when the difference gets to 0
+    print(orc._x)
+    # print(orc.W)
+    # print(np.linalg.pinv(orc.W))
+    y = orc.get_y_t(8, orc._x)
+    print(np.round(np.dot(np.linalg.pinv(orc.W), y), 2))
