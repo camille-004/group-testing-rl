@@ -1,4 +1,5 @@
 # group-testing-rl
+HDSI Undergraduate Research Scholarship 2021 project
 ## Current Problem Statement
 I am on a gameshow, and the host has an unknown $\vec{x}$. I am trying to uncover that $\vec{x}$. He samples one row $ \vec{w_1}^T=[w_{11}, w_{12}, ..., w_{1n}]$ from the Walsh matrix without replacement and multiplies it with that $\vec{x}$ to get $\vec{y_1}$, which is now a scalar, since he sampled one row. I try to find all $\tilde{x}$ such that $\vec{w_1}\tilde{x}=\vec{y_1}$ is satisfied. I must end up with at most $_{n}C_{k}$ $\tilde{x}$'s, including one that is actually equal to $x$. I keep these all in a pool. Then, the host samples another row, forming the matrix:
 $\hat{W}=\begin{bmatrix} \vec{w_1}^T \\ \vec{w_2}^T \end{bmatrix}$
