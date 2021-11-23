@@ -121,7 +121,6 @@ def sample_remaining(N, K, W, W_hat, x, n_rows=1, logging=True):
     valid_solutions = get_solutions(N, K, W_hat, x)
     if logging:
         print(f'Initial possible solutions: {len(valid_solutions)}')
-    y = W_hat @ x
     for i in range(n_rows - 1):
         if len(W) == 0:
             if logging:
