@@ -1,39 +1,54 @@
+import pprint
 import random
 from collections import defaultdict
 
 import numpy as np
+from colorama import Fore, Style
 
 from ground_truth import (
     get_x_vector, gen_W_hat, get_w_hat_t, get_W_hat_rows
 )
 from utils import scalar, sum_to_S
 
-N_EPISODES = 1000
+N_EPISODES = 15
 N = 8
-K = 3
+K = 4
+PP = pprint.PrettyPrinter(indent=4)
+
+np.random.seed(1)
 
 
 class Environment:
 
-    def __init__(self, N, K):
-        self.N = N
-        self.K = K
+    def __init__(self, _N, _K):
+        self.N = _N
+        self.K = _K
         self.x = get_x_vector(self.N, self.K)
         self.W_hat = gen_W_hat(self.N)
         self.y = self.W_hat @ self.x
 
-        W = np.array([get_w_hat_t(i, N) for i in range(N)])
+        W = np.array([get_w_hat_t(i, _N) for i in range(_N)])
+        self.idx_map = {k: v for k, v in enumerate(W)}
         to_remove = get_W_hat_rows(W, self.W_hat)
 
         self.W = np.delete(W, to_remove, 0)
-        self.n_solutions = len(self.get_solutions((self.W_hat, self.y)))
-        self.action_space = list(range(len(self.W)))  # All indices of W rows
+        self.action_space = list(set(range(self.N)) - set(to_remove))
+        self.action_num = random.choice(self.action_space)
+        self.n_solutions = len(self.get_solutions((self.action_num, self.W_hat, self.y)))
+        print(f'Start with {self.n_solutions} solutions')
 
-    def get_W(self):
-        return self.W
+    def __str__(self):
+        return f'{Fore.BLUE}{Style.BRIGHT}ENV: N = {self.N}, K = {self.K}, ' \
+               f'x = {self.x}{Style.RESET_ALL}'
+
+    def get_action_space(self):
+        return self.action_space
 
     def get_state(self):
-        return self.W_hat, self.y
+        return self.action_num, self.W_hat, self.y
+
+    def reset(self):
+
 
     def step(self, _action, reward_func):
         """
@@ -43,17 +58,20 @@ class Environment:
         :param _action: index of current row to sample from W
         :return:
         """
+        sampled_row = self.idx_map[_action]
+        sampled_idx = np.where(np.all(self.W == sampled_row, axis=1))
         self.action_space.remove(_action)
-        sampled_row = self.W[_action]
-        self.W = np.delete(self.W, _action, 0)
         self.W_hat = np.append(self.W_hat, [sampled_row], 0)
         self.y = self.W_hat @ self.x
-        next_state = np.array([self.W_hat, self.y])
-        reward, done = reward_func(next_state)
-        return next_state, reward, done
+        _next_state = self.action_num, self.W_hat, self.y
+        _reward, _done = reward_func(_next_state)
+        self.action_num = _action
+        self.W = np.delete(self.W, sampled_idx, 0)
+        return _next_state, _reward, _done
 
     def get_solutions(self, _state):
-        W_hat, y = _state
+        W_hat, y = _state[1:]
+        print(f'W_hat rows: {len(W_hat)}')
         S = scalar(y)
         solutions = []
         for partition in sum_to_S(S, self.K):
@@ -72,51 +90,69 @@ class Environment:
     def linear_reward(self, _state):
         prev_solutions = self.n_solutions
         self.n_solutions = len(self.get_solutions(_state))
-        done = False
+        _done = False
         if self.n_solutions == 1:
-            reward = 100
-            done = True
+            _reward = 1.0
+            _done = True
+        elif self.n_solutions == 0:
+            _reward = -1.0
+            _done = True
+            print(f'{Fore.RED}Did not converge{Style.RESET_ALL}')
         # If agent made no progress
         elif self.n_solutions == prev_solutions:
-            reward = -100
+            _reward = -0.05
+        elif self.n_solutions < prev_solutions:
+            _reward = -1.0
         else:
-            reward = -50
-        return reward, done
+            _reward = 0
+        print(f'{Fore.BLUE}Current # solutions: {self.n_solutions}{Style.RESET_ALL}')
+        return _reward, _done
 
 
 class QLAgent:
 
     def __init__(self,
                  W,
-                 learning_rate=0.01,
-                 discount_factor=0.8,
-                 epsilon=0.1
+                 learning_rate=0.3,
+                 discount_factor=0.9,
+                 epsilon=0.5
                  ):
         self.W = W  # Each row is a possible action
         self.learning_rate = learning_rate
         self.discount_factor = discount_factor
         self.epsilon = epsilon
-        self.q_table = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0])
+        self.q_table = defaultdict(lambda: [0.0] * int((N - np.log2(N))))
+        self.W_map = {i: k for k, i in enumerate(W)}
 
-    def learn(self, _state, action, reward, next_state):
+    def learn(self, _state, _action, _reward, _next_state):
         """Update Q-function with sample <s, a, r, s'>"""
-        q_t = self.q_table[_state][action]
-        q_t1 = reward + self.discount_factor * max(self.q_table[next_state])
-        self.q_table[_state][action] += self.learning_rate * (q_t1 - q_t)
+        q_t = self.q_table[_state][self.W_map[_action]]
+        q_t1 = _reward + self.discount_factor * max(self.q_table[_next_state])
+        PP.pprint(dict(self.q_table))
+        self.q_table[_state][self.W_map[_action]] += self.learning_rate * (q_t1 - q_t)
 
-    def get_action(self, _state):
+    def get_action(self, _state, action_space):
         """Get action for state according to Q-table, agent picks action based
         on epsilon-greedy policy"""
         p = np.random.rand()
         if p < self.epsilon:
-            _action = np.random.choice(len(self.W), 1, replace=False)
+            print(f'Choosing random action from action space: {action_space}')
+            _action = random.choice(action_space)
         else:
+            print(f'Choosing locally optimal action from action space'
+                  f' {action_space}:')
             state_action = self.q_table[_state]
-            _action = self.arg_max(state_action)
+            if len(action_space) > 1:
+                idx = self.arg_max(state_action, list(map(self.W_map.get, action_space)))
+                print(idx)
+                _action = action_space[idx]
+            else:
+                _action = action_space[0]
+        print(f'{Style.BRIGHT}Action chosen: {_action}{Style.RESET_ALL}')
         return _action
 
     @staticmethod
-    def arg_max(state_action):
+    def arg_max(state_action, action_space_idx):
         max_index_list = []
         max_value = state_action[0]
         for index, value in enumerate(state_action):
@@ -126,16 +162,29 @@ class QLAgent:
                 max_index_list.append(index)
             elif value == max_value:
                 max_index_list.append(index)
-        return random.choice(max_index_list)
+        return random.choice([i for i in max_index_list if i in action_space_idx])
 
 
 if __name__ == '__main__':
     env = Environment(N, K)
-    agent = QLAgent(env.get_W())
+    print(f'\n{env}')
+    agent = QLAgent(env.get_action_space())
 
     for episode in range(N_EPISODES):
+        print(f'{Style.BRIGHT}{Fore.CYAN}EPISODE {episode}{Style.RESET_ALL}')
         state = env.get_state()
 
         while True:
-            action = agent.get_action(state)
-            print(action)
+            a_space = env.get_action_space()
+            action = agent.get_action(str(state[0]), a_space)
+            next_state, reward, done = env.step(action, env.linear_reward)
+            agent.learn(str(action), action, reward, str(next_state[0]))
+            state = next_state
+            if done:
+                break
+
+"""
+TODO:
+Create fixed mapping for row indices so that we can account for changing
+size of W_hat
+"""
