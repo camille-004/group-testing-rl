@@ -7,6 +7,7 @@ from keras.models import Sequential
 from keras.layers.core import Dense, Activation
 from keras.optimizers import SGD, Adam, RMSprop
 from keras.layers.advanced_activations import PReLU
+import matplotlib.pyplot as plt
 import numpy as np
 
 from ground_truth import (
@@ -14,11 +15,13 @@ from ground_truth import (
 )
 from utils import scalar, sum_to_S
 
+# TODO Find out how to not repeat actions - Later, instead of reducing award, make it a constraint in the beginning
+#  that you can't pick from an action already in memory. Current issue is that agent has to learn to NOT repeat actions.
 
 np.random.seed(1)
 
 N = 8
-K = 2
+K = 5
 
 epsilon = 0.1
 
@@ -32,7 +35,7 @@ class Environment:
 
         W = np.array([get_w_hat_t(i, N) for i in range(self.N)])
         self.row_map = {k: v for k, v in enumerate(W)}
-        self.W_hat = gen_W_hat(N)
+        self.W_hat = gen_W_hat(self.N)
 
         to_remove = get_W_hat_rows(W, self.W_hat)
         self.W = np.delete(W, to_remove, 0)
@@ -41,19 +44,20 @@ class Environment:
         self.solutions = self.get_solutions(self.W_hat @ self.x)
         self.n_solutions = len(self.solutions)
 
-    def reset(self, start_idx):
-        # TODO Reset properly so number of solutions goes back to original
-        W = np.array([get_w_hat_t(i, N) for i in range(self.N)])
-        self._W = W
+    def reset(self):
         self.min_reward = -0.8 * (self.N - np.log2(self.N))
         self.total_reward = 0
+
+        W = np.array([get_w_hat_t(i, N) for i in range(self.N)])
+        self.row_map = {k: v for k, v in enumerate(W)}
         self.W_hat = gen_W_hat(self.N)
 
-        sampled_row = W[start_idx]
-        sampled_idx = np.where(np.all(self._W == sampled_row, axis=1))
-        self._W = np.delete(self._W, sampled_idx, 0)
-        self.W_hat = np.append(self.W_hat, [sampled_row], 0)
+        to_remove = get_W_hat_rows(W, self.W_hat)
+        self.W = np.delete(W, to_remove, 0)
 
+        self.action_space = list(set(range(N)) - set(to_remove))
+        self.solutions = self.get_solutions(self.W_hat @ self.x)
+        self.n_solutions = len(self.solutions)
         self.state = self.W_hat, self.W_hat @ self.x
 
     def update_state(self, action):
@@ -95,10 +99,10 @@ class Environment:
 
     def reward(self):
         prev_solutions = self.n_solutions
-        print(f'Previous amount of solutions: {prev_solutions}')
+        # print(f'Previous amount of solutions: {prev_solutions}')
         n_solutions = len(self.reduce_solutions())
         self.n_solutions = n_solutions
-        print(f'New amount of solutions: {n_solutions}')
+        # print(f'New amount of solutions: {n_solutions}')
         if n_solutions == prev_solutions:
             return -0.75
         if n_solutions < prev_solutions:
@@ -205,7 +209,8 @@ def train_ql(_model, _N, _K, _x, **config):
     max_memory = config.get('max_memory', 1000)
     data_size = config.get('data_size', 50)
     weights_file = config.get('weights_file', '')
-    name = config.get('name', 'model')
+    name = config.get('name',
+                      f'Q_model_N{_N}_K{_K}_x{"".join([str(b) for b in _x])}')
     start_time = datetime.datetime.now()
 
     if weights_file:
@@ -216,13 +221,16 @@ def train_ql(_model, _N, _K, _x, **config):
     agent = QLAgent(_model, max_memory=max_memory)
 
     win_history = []
-    history_window_size = _N // 2
+    history_window_size = (_N ** 2) // 2
     win_rate = 0.0
+
+    win_rate_history = []
+    loss_history = []
 
     for epoch in range(n_epochs):
         loss = 0.0
-        sample_row_idx = random.choice(list(environment.valid_actions()))
-        environment.reset(sample_row_idx)
+        # sample_row_idx = random.choice(list(environment.valid_actions()))
+        environment.reset()
         done = False
 
         env_state = environment.observe()
@@ -231,7 +239,7 @@ def train_ql(_model, _N, _K, _x, **config):
 
         while not done:
             valid_actions = environment.valid_actions()
-            print(f'EPOCH {epoch}: {valid_actions}')
+            # print(f'EPOCH {epoch}: {valid_actions}')
             if not valid_actions:
                 break
             prev_env_state = env_state
@@ -247,6 +255,11 @@ def train_ql(_model, _N, _K, _x, **config):
             # Apply action, get reward, new environment state
             env_state, reward, status = environment.act(action)
 
+            for ep in agent.memory:
+                if ep[1] == action:
+                    reward = 0
+                    env_state = prev_env_state
+
             if status == 'Converged':
                 win_history.append(1)
                 done = True
@@ -255,10 +268,6 @@ def train_ql(_model, _N, _K, _x, **config):
                 done = True
             else:
                 done = False
-
-            for ep in agent.memory:
-                if ep[2] == action:
-                    reward += env.min_reward
 
             # Store episode
             episode = [prev_env_state, action, reward, env_state, done]
@@ -284,7 +293,7 @@ def train_ql(_model, _N, _K, _x, **config):
         dt = datetime.datetime.now() - start_time
         t = format_time(dt.total_seconds())
         template = 'Epoch: {:03d}/{:d} | Loss: {:.4f} | Episodes: {:d} | ' \
-                   'Win count: {:d} | Win rate: {:.3f} | time: {}'
+                   'Win count: {:d} | Win rate: {:.3f} | Time: {}'
         print(template.format(epoch,
                               n_epochs - 1,
                               loss,
@@ -294,15 +303,17 @@ def train_ql(_model, _N, _K, _x, **config):
                               t))
         if win_rate > 0.9:
             epsilon = 0.05
+        win_rate_history.append(win_rate)
+        loss_history.append(loss)
         if sum(win_history[:-history_window_size]) == history_window_size:
             print('Reached 100%% win rate at epoch: %d' % (epoch,))
             break
 
-    h5_file = name + '.h5'
-    json_file = name + '.json'
+    h5_file = 'models/' + name + '.h5'
+    json_file = 'models/' + name + '.json'
     _model.save_weights(h5_file, overwrite=True)
     with open(json_file, 'w') as out_file:
-        json.dump(_model.to_json(), out_file)
+        json.dump(_model.to_json(), out_file, indent=4)
 
     end_time = datetime.datetime.now()
     dt = end_time - start_time
@@ -312,7 +323,7 @@ def train_ql(_model, _N, _K, _x, **config):
     print("# Epochs: %d, Max Memory: %d, time: %s" % (
         epoch, max_memory, t)
     )
-    return seconds
+    return seconds, win_rate_history, loss_history
 
 
 def format_time(seconds):
@@ -342,6 +353,7 @@ def build_model(_env, lr=0.001):
 x = get_x_vector(N, K)
 env = Environment(N, K, x)
 model = build_model(env.W)
-train_ql(model, N, K, x, max_memory=8 * N ** 2, data_size=32)
-
-# TODO Find out how to not repeat actions
+seconds, rates, loss = train_ql(
+    model, N, K, x, max_memory=8 * N ** 2, data_size=32
+)
+#%%
