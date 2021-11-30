@@ -14,7 +14,7 @@ from ground_truth import (
 )
 from utils import scalar, sum_to_S
 
-# %%
+
 np.random.seed(1)
 
 N = 8
@@ -23,7 +23,6 @@ K = 4
 epsilon = 0.1
 
 
-# %%
 class Environment:
 
     def __init__(self, _N, _K, _x):
@@ -117,7 +116,9 @@ class Environment:
         return env_state, reward, status
 
     def observe(self):
-        return self.state[0].reshape((1, -1))
+        flattened_W_hat = self.state[0].reshape((1, -1))
+        padding = np.array([-1] * (self.N ** 2 - flattened_W_hat.shape[1]))
+        return np.array([np.append(flattened_W_hat[0], padding)])
 
     def status(self):
         if self.total_reward < self.min_reward:
@@ -129,20 +130,20 @@ class Environment:
     def valid_actions(self):
         W = np.array([get_w_hat_t(i, N) for i in range(self.N)])
         W_hat_bits = [list(reversed(row)) for row in self.W_hat]
-        W_idx = [np.where(np.all(W == row, axis=1))[0][0] for row in W_hat_bits]
+        W_idx = [np.where(np.all(W == row, axis=1)) for row in W_hat_bits]
+        W_idx = [i[0][0] for i in W_idx if i[0].size > 0]
         valid_actions = set(range(len(W))) - set(list(W_idx))
         return list(valid_actions)
 
 
-# %%
-def run_sampling(model, _env):
+def run_sampling(_model, _env):
     _env.reset()
     env_state = _env.observe()
 
     while True:
         prev_env_state = env_state
 
-        q = model.predict(prev_env_state)
+        q = _model.predict(prev_env_state)
         action = np.argmax(q[0])
 
         env_state, reward, status = _env.act(action)
@@ -153,15 +154,14 @@ def run_sampling(model, _env):
             return False
 
 
-# %%
 class QLAgent:
 
-    def __init__(self, model, max_memory=100, discount=0.95):
-        self.model = model  # A neural network model
+    def __init__(self, _model, max_memory=100, discount=0.95):
+        self.model = _model  # A neural network model
         self.max_memory = max_memory  # Maximal length of episodes to keep
         self.discount = discount
         self.memory = []
-        self.n_actions = model.output_shape[-1]
+        self.n_actions = _model.output_shape[-1]
 
     def remember(self, episode):
         # episode = [env_state, action, reward, next_state, status]
@@ -171,13 +171,16 @@ class QLAgent:
             del self.memory[0]
 
     def predict(self, env_state):
-        print(env_state)
+        if env_state[0].shape[0] > N ** 2:
+            print(f'Shape is greater than {N ** 2}\n')
+            print(env_state[0])
         return self.model.predict(env_state)[0]
 
     def get_data(self, data_size=10):
         env_size = self.memory[0][0].shape[1]
         print(f'Env size: {env_size}')
         mem_size = len(self.memory)
+        print(f'Memory size: {mem_size}')
         data_size = min(mem_size, data_size)
         inputs = np.zeros((data_size, env_size))
         targets = np.zeros((data_size, self.n_actions))
@@ -197,9 +200,7 @@ class QLAgent:
         return inputs, targets
 
 
-# %%
-
-def train_ql(model, _N, _K, _x, **config):
+def train_ql(_model, _N, _K, _x, **config):
     global epsilon
     n_epochs = config.get('n_epoch', 15000)
     max_memory = config.get('max_memory', 1000)
@@ -210,10 +211,10 @@ def train_ql(model, _N, _K, _x, **config):
 
     if weights_file:
         print('Loading weights from file: %s' % (weights_file,))
-        model.load_weights(weights_file)
+        _model.load_weights(weights_file)
 
     environment = Environment(_N, _K, _x)
-    agent = QLAgent(model, max_memory=max_memory)
+    agent = QLAgent(_model, max_memory=max_memory)
 
     win_history = []
     history_window_size = _N // 2
@@ -241,6 +242,8 @@ def train_ql(model, _N, _K, _x, **config):
             else:
                 action = np.argmax(agent.predict(prev_env_state))
 
+            print(f'ACTION NUMBER: {action}')
+
             # Apply action, get reward, new environment state
             env_state, reward, status = environment.act(action)
 
@@ -259,14 +262,14 @@ def train_ql(model, _N, _K, _x, **config):
             n_episodes += 1
 
             inputs, targets = agent.get_data(data_size=data_size)
-            h = model.fit(
+            h = _model.fit(
                 inputs,
                 targets,
                 epochs=8,
                 batch_size=16,
                 verbose=0
             )
-            loss = model.evaluate(inputs, targets, verbose=0)
+            loss = _model.evaluate(inputs, targets, verbose=0)
 
         if len(win_history) > history_window_size:
             win_rate = sum(
@@ -292,9 +295,9 @@ def train_ql(model, _N, _K, _x, **config):
 
         h5_file = name + '.h5'
         json_file = name + '.json'
-        model.save_weights(h5_file, overwrite=True)
+        _model.save_weights(h5_file, overwrite=True)
         with open(json_file, 'w') as out_file:
-            json.dump(model.to_json(), out_file)
+            json.dump(_model.to_json(), out_file)
 
         end_time = datetime.datetime.now()
         dt = end_time - start_time
@@ -319,7 +322,6 @@ def format_time(seconds):
         return '%.2f hours' % (h,)
 
 
-# %%
 def build_model(_env, lr=0.001):
     _model = Sequential()
     _model.add(Dense(N * N, input_shape=(N * N,)))
@@ -337,4 +339,4 @@ env = Environment(N, K, x)
 model = build_model(env.W)
 train_ql(model, N, K, x, max_memory=8 * N, data_size=32)
 
-# TODO : Make input environment state fixed shape: ((1, N ** 2)), i.e., append -1's to rest of W_hat
+# TODO Find out how to not repeat actions
