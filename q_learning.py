@@ -18,7 +18,7 @@ from utils import scalar, sum_to_S
 np.random.seed(1)
 
 N = 8
-K = 4
+K = 2
 
 epsilon = 0.1
 
@@ -42,11 +42,12 @@ class Environment:
         self.n_solutions = len(self.solutions)
 
     def reset(self, start_idx):
+        # TODO Reset properly so number of solutions goes back to original
         W = np.array([get_w_hat_t(i, N) for i in range(self.N)])
-        self._W = np.copy(self.W)
+        self._W = W
         self.min_reward = -0.8 * (self.N - np.log2(self.N))
         self.total_reward = 0
-        self.W_hat = gen_W_hat(N)
+        self.W_hat = gen_W_hat(self.N)
 
         sampled_row = W[start_idx]
         sampled_idx = np.where(np.all(self._W == sampled_row, axis=1))
@@ -113,7 +114,10 @@ class Environment:
         self.total_reward += reward
         status = self.status()
         env_state = self.observe()
-        return env_state, reward, status
+        if len(env_state) > self.N ** 2:
+            status = 'Did not converge'
+        res = env_state, reward, status
+        return res
 
     def observe(self):
         flattened_W_hat = self.state[0].reshape((1, -1))
@@ -121,7 +125,7 @@ class Environment:
         return np.array([np.append(flattened_W_hat[0], padding)])
 
     def status(self):
-        if self.total_reward < self.min_reward:
+        if self.total_reward < self.min_reward or len(self.W_hat) > N:
             return 'Did not converge'
         if self.n_solutions == 1:
             return 'Converged'
@@ -171,31 +175,26 @@ class QLAgent:
             del self.memory[0]
 
     def predict(self, env_state):
-        if env_state[0].shape[0] > N ** 2:
-            print(f'Shape is greater than {N ** 2}\n')
-            print(env_state[0])
         return self.model.predict(env_state)[0]
 
     def get_data(self, data_size=10):
         env_size = self.memory[0][0].shape[1]
-        print(f'Env size: {env_size}')
         mem_size = len(self.memory)
-        print(f'Memory size: {mem_size}')
         data_size = min(mem_size, data_size)
         inputs = np.zeros((data_size, env_size))
-        targets = np.zeros((data_size, self.n_actions))
+        targets = np.zeros((data_size, N))
 
         for i, j in enumerate(np.random.choice(
                 range(mem_size), data_size, replace=False)
         ):
             env_state, action, reward, next_state, status = self.memory[j]
             inputs[i] = env_state
-            targets[i] = self.predict(env_state)
-            Q_sa = np.max(self.predict(next_state))
             if status:
                 targets[i, action] = reward
-            else:
-                targets[i, action] = reward + self.discount * Q_sa
+                return inputs, targets
+            targets[i] = self.predict(env_state)
+            Q_sa = np.max(self.predict(next_state))
+            targets[i, action] = reward + self.discount * Q_sa
 
         return inputs, targets
 
@@ -232,6 +231,7 @@ def train_ql(_model, _N, _K, _x, **config):
 
         while not done:
             valid_actions = environment.valid_actions()
+            print(f'EPOCH {epoch}: {valid_actions}')
             if not valid_actions:
                 break
             prev_env_state = env_state
@@ -242,7 +242,7 @@ def train_ql(_model, _N, _K, _x, **config):
             else:
                 action = np.argmax(agent.predict(prev_env_state))
 
-            print(f'ACTION NUMBER: {action}')
+            # print(f'ACTION NUMBER: {action}')
 
             # Apply action, get reward, new environment state
             env_state, reward, status = environment.act(action)
@@ -256,8 +256,13 @@ def train_ql(_model, _N, _K, _x, **config):
             else:
                 done = False
 
+            for ep in agent.memory:
+                if ep[2] == action:
+                    reward += env.min_reward
+
             # Store episode
             episode = [prev_env_state, action, reward, env_state, done]
+
             agent.remember(episode)
             n_episodes += 1
 
@@ -293,21 +298,21 @@ def train_ql(_model, _N, _K, _x, **config):
             print('Reached 100%% win rate at epoch: %d' % (epoch,))
             break
 
-        h5_file = name + '.h5'
-        json_file = name + '.json'
-        _model.save_weights(h5_file, overwrite=True)
-        with open(json_file, 'w') as out_file:
-            json.dump(_model.to_json(), out_file)
+    h5_file = name + '.h5'
+    json_file = name + '.json'
+    _model.save_weights(h5_file, overwrite=True)
+    with open(json_file, 'w') as out_file:
+        json.dump(_model.to_json(), out_file)
 
-        end_time = datetime.datetime.now()
-        dt = end_time - start_time
-        seconds = dt.total_seconds()
-        t = format_time(seconds)
-        print('Files: %s, %s' % (h5_file, json_file))
-        print("n_epochs: %d, max_memory: %d, data: %d, time: %s" % (
-            epoch, max_memory, data_size, t)
-        )
-        return seconds
+    end_time = datetime.datetime.now()
+    dt = end_time - start_time
+    seconds = dt.total_seconds()
+    t = format_time(seconds)
+    print('Files: %s, %s' % (h5_file, json_file))
+    print("# Epochs: %d, Max Memory: %d, time: %s" % (
+        epoch, max_memory, t)
+    )
+    return seconds
 
 
 def format_time(seconds):
@@ -328,7 +333,7 @@ def build_model(_env, lr=0.001):
     _model.add(PReLU())
     _model.add(Dense(N * N))
     _model.add(PReLU())
-    _model.add(Dense(N - np.log2(N)))
+    _model.add(Dense(N))
     _model.compile(optimizer='adam', loss='mse')
     return _model
 
@@ -337,6 +342,6 @@ def build_model(_env, lr=0.001):
 x = get_x_vector(N, K)
 env = Environment(N, K, x)
 model = build_model(env.W)
-train_ql(model, N, K, x, max_memory=8 * N, data_size=32)
+train_ql(model, N, K, x, max_memory=8 * N ** 2, data_size=32)
 
 # TODO Find out how to not repeat actions
