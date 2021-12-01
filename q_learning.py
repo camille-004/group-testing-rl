@@ -3,6 +3,7 @@ import datetime
 import json
 import random
 
+from colorama import Fore, Style
 from keras.models import Sequential
 from keras.layers.core import Dense, Activation
 from keras.optimizers import SGD, Adam, RMSprop
@@ -15,15 +16,16 @@ from ground_truth import (
 )
 from utils import scalar, sum_to_S
 
-# TODO Find out how to not repeat actions - Later, instead of reducing award, make it a constraint in the beginning
-#  that you can't pick from an action already in memory. Current issue is that agent has to learn to NOT repeat actions.
+# Main obstacle with this problem: action space cannot shrink, making training
+# MUCH longer --> agent will have to learn not to repeat
+# For now, ignore repetitions and don't count them in episodes
 
 np.random.seed(1)
 
 N = 8
-K = 5
+K = 2
 
-epsilon = 0.1
+epsilon = 1.0
 
 
 class Environment:
@@ -45,8 +47,8 @@ class Environment:
         self.n_solutions = len(self.solutions)
 
     def reset(self):
-        self.min_reward = -0.8 * (self.N - np.log2(self.N))
-        self.total_reward = 0
+        self.min_reward = int(-0.5 * ((self.N - np.log2(self.N)) ** 2))
+        self.total_reward = 0.0
 
         W = np.array([get_w_hat_t(i, N) for i in range(self.N)])
         self.row_map = {k: v for k, v in enumerate(W)}
@@ -59,6 +61,8 @@ class Environment:
         self.solutions = self.get_solutions(self.W_hat @ self.x)
         self.n_solutions = len(self.solutions)
         self.state = self.W_hat, self.W_hat @ self.x
+
+        self.picked = set()
 
     def update_state(self, action):
         """
@@ -97,25 +101,30 @@ class Environment:
         self.solutions = valid_solutions
         return self.solutions
 
-    def reward(self):
+    def reward(self, action):
         prev_solutions = self.n_solutions
         # print(f'Previous amount of solutions: {prev_solutions}')
         n_solutions = len(self.reduce_solutions())
         self.n_solutions = n_solutions
         # print(f'New amount of solutions: {n_solutions}')
+        if action in self.picked:
+            # print(f'{action} already in {self.picked}')
+            return self.min_reward - 1
         if n_solutions == prev_solutions:
             return -0.75
         if n_solutions < prev_solutions:
-            return -0.05
+            return -0.5
         if n_solutions == 1:
             return 1.0
-        if n_solutions == 0:
-            return self.min_reward - 1
+
+        # if n_solutions == 0:
+        #     return self.min_reward - 1
 
     def act(self, action):
         self.update_state(action)
-        reward = self.reward()
+        reward = self.reward(action)
         self.total_reward += reward
+        self.picked.add(action)
         status = self.status()
         env_state = self.observe()
         if len(env_state) > self.N ** 2:
@@ -164,7 +173,7 @@ def run_sampling(_model, _env):
 
 class QLAgent:
 
-    def __init__(self, _model, max_memory=100, discount=0.95):
+    def __init__(self, _model, max_memory=100, discount=0.999):
         self.model = _model  # A neural network model
         self.max_memory = max_memory  # Maximal length of episodes to keep
         self.discount = discount
@@ -205,12 +214,14 @@ class QLAgent:
 
 def train_ql(_model, _N, _K, _x, **config):
     global epsilon
-    n_epochs = config.get('n_epoch', 15000)
+    n_epochs = config.get('n_epochs', 15000)
     max_memory = config.get('max_memory', 1000)
     data_size = config.get('data_size', 50)
     weights_file = config.get('weights_file', '')
     name = config.get('name',
                       f'Q_model_N{_N}_K{_K}_x{"".join([str(b) for b in _x])}')
+    eps_threshold = config.get('eps_threshold', 0.8)  # Win rate threshold to change epsilon
+    learning_rate = config.get('learning_rate', 0.001)
     start_time = datetime.datetime.now()
 
     if weights_file:
@@ -222,13 +233,15 @@ def train_ql(_model, _N, _K, _x, **config):
 
     win_history = []
     history_window_size = (_N ** 2) // 2
+    # history_window_size = _N * 2
     win_rate = 0.0
 
     win_rate_history = []
     loss_history = []
+    epsilon_history = []
 
     for epoch in range(n_epochs):
-        loss = 0.0
+        _loss = 0.0
         # sample_row_idx = random.choice(list(environment.valid_actions()))
         environment.reset()
         done = False
@@ -247,23 +260,28 @@ def train_ql(_model, _N, _K, _x, **config):
             # Epsilon-greedy strategy
             if np.random.rand() < epsilon:
                 action = random.choice(valid_actions)
+                # print(f'{action} randomly')
             else:
                 action = np.argmax(agent.predict(prev_env_state))
-
-            # print(f'ACTION NUMBER: {action}')
+                # print(f'{action} from prediction')
 
             # Apply action, get reward, new environment state
             env_state, reward, status = environment.act(action)
-
-            for ep in agent.memory:
-                if ep[1] == action:
-                    reward = 0
-                    env_state = prev_env_state
+            n_episodes += 1
 
             if status == 'Converged':
-                win_history.append(1)
+                if n_episodes <= int(K * np.log2(N) / np.log2(K + 1)):
+                    print(f'{Fore.GREEN}Converged in sufficient (<= {int(K * np.log2(N) / np.log2(K + 1))}) episodes'
+                          f'{Style.RESET_ALL}')
+                    win_history.append(1)
+                else:
+                    print(f'{Fore.MAGENTA}Converged in insufficient ({n_episodes}) episodes'
+                          f'{Style.RESET_ALL}')
+                    win_history.append(0)
                 done = True
             elif status == 'Did not converge':
+                print(f'{Fore.RED}Did not converge'
+                      f'{Style.RESET_ALL}')
                 win_history.append(0)
                 done = True
             else:
@@ -273,7 +291,6 @@ def train_ql(_model, _N, _K, _x, **config):
             episode = [prev_env_state, action, reward, env_state, done]
 
             agent.remember(episode)
-            n_episodes += 1
 
             inputs, targets = agent.get_data(data_size=data_size)
             h = _model.fit(
@@ -283,7 +300,7 @@ def train_ql(_model, _N, _K, _x, **config):
                 batch_size=16,
                 verbose=0
             )
-            loss = _model.evaluate(inputs, targets, verbose=0)
+            _loss = _model.evaluate(inputs, targets, verbose=0)
 
         if len(win_history) > history_window_size:
             win_rate = sum(
@@ -296,16 +313,21 @@ def train_ql(_model, _N, _K, _x, **config):
                    'Win count: {:d} | Win rate: {:.3f} | Time: {}'
         print(template.format(epoch,
                               n_epochs - 1,
-                              loss,
+                              _loss,
                               n_episodes,
                               sum(win_history),
                               win_rate,
                               t))
-        if win_rate > 0.9:
-            epsilon = 0.05
+        epsilon_history.append(epsilon)
+        print(f'epsilon = {epsilon}\n')
+        if win_rate > eps_threshold:
+            epsilon -= learning_rate
+            eps_threshold += 0.01
+            if eps_threshold > 0.9:
+                eps_threshold = 0.9
         win_rate_history.append(win_rate)
-        loss_history.append(loss)
-        if sum(win_history[:-history_window_size]) == history_window_size:
+        loss_history.append(_loss)
+        if sum(win_history[-history_window_size:]) == history_window_size:
             print('Reached 100%% win rate at epoch: %d' % (epoch,))
             break
 
@@ -317,13 +339,13 @@ def train_ql(_model, _N, _K, _x, **config):
 
     end_time = datetime.datetime.now()
     dt = end_time - start_time
-    seconds = dt.total_seconds()
-    t = format_time(seconds)
+    _seconds = dt.total_seconds()
+    t = format_time(_seconds)
     print('Files: %s, %s' % (h5_file, json_file))
     print("# Epochs: %d, Max Memory: %d, time: %s" % (
         epoch, max_memory, t)
-    )
-    return seconds, win_rate_history, loss_history
+          )
+    return _seconds, win_rate_history, loss_history, epsilon_history
 
 
 def format_time(seconds):
@@ -353,7 +375,13 @@ def build_model(_env, lr=0.001):
 x = get_x_vector(N, K)
 env = Environment(N, K, x)
 model = build_model(env.W)
-seconds, rates, loss = train_ql(
-    model, N, K, x, max_memory=8 * N ** 2, data_size=32
+seconds, rates, loss, eps = train_ql(
+    model, N, K, x, n_epochs=200, data_size=32, eps_threshold=0.55, learning_rate=0.01
 )
+
 #%%
+plt.plot(eps, color='black')
+plt.xlabel('Epochs')
+plt.ylabel('Epsilon')
+plt.title(f'Epsilon Decay Up to 200 Epochs: N = {N}, K = {K}')
+plt.show()
